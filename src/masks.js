@@ -8,6 +8,7 @@ export function maskPhoneBR(value) {
 
 export function onPhoneInput(event) {
   event.currentTarget.value = maskPhoneBR(event.currentTarget.value);
+  event.currentTarget.setCustomValidity("");
 }
 
 export function maskCNPJ(value) {

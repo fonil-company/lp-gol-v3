@@ -115,6 +115,24 @@ test("partial failure retries only CRM with identical payload and emits Lead aft
   expect((await pixelCalls(page)).filter(call => call[1] === "Lead")).toHaveLength(1);
 });
 
+test("correcting an invalid phone allows keyboard submission and one confirmed Lead", async ({ page, app }) => {
+  await page.goto(`${app.url}/?utm_source=meta`);
+  await fillForm(page);
+  const phone = page.locator('[name="numero"]');
+  await phone.fill("11");
+  await phone.blur();
+  expect(await phone.evaluate(input => input.validity.customError)).toBe(true);
+  expect(app.received).toHaveLength(0);
+  expect((await pixelCalls(page)).filter(call => call[1] === "Lead")).toHaveLength(0);
+  await phone.fill("11999990000");
+  await phone.press("Enter");
+  await expect(page.getByRole("heading", { name: "Solicitação recebida!" })).toBeVisible();
+  expect(app.received).toHaveLength(2);
+  expect((await pixelCalls(page)).filter(call => call[1] === "Lead")).toEqual([
+    ["track", "Lead", {}, { eventID: app.received[0].body.event_id }],
+  ]);
+});
+
 test("malformed cookie and throwing Pixel cannot hide confirmed form success", async ({ page, app }) => {
   await page.goto(app.url);
   await fillForm(page);

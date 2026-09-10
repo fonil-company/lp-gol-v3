@@ -86,7 +86,9 @@ webhook e bloqueiam tráfego externo do navegador, incluindo o Pixel.
 
 Os testes verificam o JSON efetivamente recebido pelos receptores locais e a
 fila do Pixel. Recebimento no Gerenciador de Eventos e persistência no CRM
-real dependem de verificação externa. A documentação oficial de
+real dependem de verificação externa. Também verificam que corrigir um telefone
+inválido permite enviar pelo teclado, sem manter o erro anterior nem disparar
+`Lead` antes da confirmação dos webhooks. A documentação oficial de
 [conversões do Pixel](https://developers.facebook.com/docs/meta-pixel/implementation/conversion-tracking/)
 retornou HTTP 429 durante esta alteração; foi preservada a chamada existente
 `fbq('track', 'Lead', {}, { eventID })`, sem alterar o protocolo.
