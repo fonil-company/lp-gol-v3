@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLeadDelivery, formatCrmPayload } from "./lead-delivery.js";
 
 const localEnvPath = fileURLToPath(new URL(".env", import.meta.url));
 if (existsSync(localEnvPath)) process.loadEnvFile(localEnvPath);
@@ -19,17 +20,15 @@ const WEBHOOK_TARGETS = [
     required: true,
     url:
       process.env.CRM_WEBHOOK_URL,
-    formatPayload: (payload) => ({
-      phone: String(payload.phone || "").replace(/\D/g, ""),
-      name: String(payload.name || "").trim(),
-      document: String(payload.cnpj || "").replace(/\D/g, ""),
-    }),
+    formatPayload: formatCrmPayload,
   },
 ];
 
+const deliverLead = createLeadDelivery({ targets: WEBHOOK_TARGETS });
+
 const rootDirectory = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.join(rootDirectory, "dist");
-const port = Number(process.env.PORT) || 3000;
+const port = process.env.PORT === undefined ? 3000 : Number(process.env.PORT);
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -67,54 +66,19 @@ async function forwardLead(request, response) {
       return sendJson(response, 422, { ok: false });
     }
 
-    const results = await Promise.allSettled(
-      WEBHOOK_TARGETS.map(async (target) => {
-        const targetPayload = target.formatPayload
-          ? target.formatPayload(payload)
-          : payload;
-        const webhookResponse = await fetch(target.url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(targetPayload),
-          signal: AbortSignal.timeout(10_000),
-        });
-
-        if (!webhookResponse.ok) {
-          throw new Error(
-            `${target.name} respondeu com status ${webhookResponse.status}`,
-          );
-        }
-      }),
-    );
-
-    const failures = results
-      .map((result, index) => ({ result, target: WEBHOOK_TARGETS[index] }))
-      .filter(({ result }) => result.status === "rejected");
-    const requiredFailures = failures.filter(({ target }) => target.required);
-    const summarizeFailures = (items) =>
-      items.map(({ result, target }) => ({
-        name: target.name,
-        reason: result.reason?.message || "Erro desconhecido",
-      }));
-
-    if (requiredFailures.length > 0) {
-      console.error(
-        "Falha no webhook obrigatório:",
-        summarizeFailures(requiredFailures),
-      );
-      return sendJson(response, 502, { ok: false });
+    // Previously opened versions of this page already send event_id, but no name.
+    if (payload.event_name === undefined) payload.event_name = "Lead";
+    if (
+      typeof payload.event_id !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(payload.event_id) ||
+      payload.event_name !== "Lead"
+    ) {
+      return sendJson(response, 422, { ok: false });
     }
-
-    if (failures.length > 0) {
-      console.warn(
-        "Falha em webhook complementar:",
-        summarizeFailures(failures),
-      );
-    }
-
-    return sendJson(response, 200, { ok: true });
-  } catch (error) {
-    console.error("Falha ao processar lead:", error);
+    const result = await deliverLead(payload);
+    return sendJson(response, result.status, result.body);
+  } catch {
+    // Do not log submitted contact data or credential-bearing webhook URLs.
     return sendJson(response, 400, { ok: false });
   }
 }
@@ -157,5 +121,5 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`Servidor iniciado na porta ${port}`);
+  console.log(`Servidor iniciado na porta ${server.address().port}`);
 });

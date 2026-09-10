@@ -1,54 +1,70 @@
-function getAttribution() {
-  const params = new URLSearchParams(window.location.search);
+import { createAttribution, getCookie } from "./attribution.js";
 
-  return {
-    utm_source: params.get("utm_source") || "",
-    utm_medium: params.get("utm_medium") || "",
-    utm_campaign: params.get("utm_campaign") || "",
-    utm_content: params.get("utm_content") || "",
-    utm_term: params.get("utm_term") || "",
-    fbclid: params.get("fbclid") || "",
-    gclid: params.get("gclid") || "",
+export function createLeadSubmitter({
+  browser,
+  fetcher = (...args) => fetch(...args),
+  createEventId = () => crypto.randomUUID(),
+  now = () => new Date().toISOString(),
+}) {
+  // Capture on module initialization, before the form or any internal navigation.
+  const getAttribution = createAttribution(browser);
+  const attempts = new Map();
+
+  return function submitLead(formData) {
+    const contact = {
+      name: String(formData.get("nome") || "").trim(),
+      phone: String(formData.get("numero") || ""),
+      cnpj: String(formData.get("cnpj") || ""),
+    };
+    const key = JSON.stringify(contact);
+    let attempt = attempts.get(key);
+    if (!attempt) {
+      const attribution = getAttribution();
+      attempt = {
+        payload: {
+          event_id: createEventId(),
+          event_name: "Lead",
+          source: "Gol Distribuidora",
+          ...contact,
+          nome: contact.name,
+          numero: contact.phone,
+          whatsapp: contact.phone,
+          ...attribution,
+          page_url: browser.location.href,
+          referrer: attribution.entry_referrer,
+          submitted_at: now(),
+          _fbc: getCookie(browser.document, "_fbc"),
+          _fbp: getCookie(browser.document, "_fbp"),
+        },
+        inFlight: null,
+        completed: false,
+      };
+      attempts.set(key, attempt);
+    }
+    if (attempt.completed) return Promise.resolve();
+    if (attempt.inFlight) return attempt.inFlight;
+
+    attempt.inFlight = (async () => {
+      const response = await fetcher("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(attempt.payload),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.ok !== true) {
+        throw new Error("Não foi possível concluir o cadastro. Tente novamente.");
+      }
+      attempt.completed = true;
+      try {
+        if (typeof browser.fbq === "function") {
+          browser.fbq("track", "Lead", {}, { eventID: attempt.payload.event_id });
+        }
+      } catch { /* Tracking failure must not turn an accepted lead into an error. */ }
+    })().finally(() => { attempt.inFlight = null; });
+    return attempt.inFlight;
   };
 }
 
-function getCookie(name) {
-  const prefix = `${name}=`;
-  const cookie = document.cookie.split("; ").find((item) => item.startsWith(prefix));
-  return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : "";
-}
-
-export async function submitLead(formData) {
-  const eventId = crypto.randomUUID();
-  const payload = {
-    event_id: eventId,
-    source: "Gol Distribuidora",
-    name: formData.get("nome"),
-    nome: formData.get("nome"),
-    phone: formData.get("numero"),
-    numero: formData.get("numero"),
-    whatsapp: formData.get("numero"),
-    cnpj: formData.get("cnpj"),
-    page_url: window.location.href,
-    referrer: document.referrer,
-    submitted_at: new Date().toISOString(),
-    ...getAttribution(),
-    _fbc: getCookie("_fbc"),
-    _fbp: getCookie("_fbp"),
-  };
-
-  const response = await fetch("/api/leads", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const result = await response.json().catch(() => null);
-
-  if (!response.ok || !result?.ok) {
-    throw new Error("Não foi possível concluir o cadastro. Tente novamente.");
-  }
-
-  if (typeof window.fbq === "function") {
-    window.fbq("track", "Lead", {}, { eventID: eventId });
-  }
-}
+export const submitLead = typeof window === "undefined"
+  ? undefined
+  : createLeadSubmitter({ browser: window });

@@ -22,7 +22,7 @@ function LeadForm() {
     const form = event.currentTarget;
     const phoneValid = validatePhoneField(form.querySelector('input[name="numero"]'));
     const cnpjValid = validateCNPJField(form.querySelector('input[name="cnpj"]'));
-    if (!phoneValid || !cnpjValid || submitting) return;
+    if (!phoneValid || !cnpjValid || !form.reportValidity() || submitting || submitted) return;
     setSubmitting(true);
     setSubmissionError("");
     try {
